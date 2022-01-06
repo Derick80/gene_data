@@ -1,0 +1,102 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r}
+library(tidyverse)
+library(data.table)
+```
+
+
+```{r}
+hg19_imp <- fread("hg19.txt")
+str(hg19_imp)
+#discovered that the exonStarts and ExonEnds rows contained an additional comma at the very end that needed to be removed
+#table(hg19_imp$exonStarts[1])
+#filter out cdsStartStat that is equal to none
+
+hg19_imp$index<- rownames(hg19_imp)
+hg19_imp$index<- as.numeric(hg19_imp$index)
+hg19_imp$exonStarts<- str_replace_all( hg19_imp$exonStarts, "\\,$", "")
+hg19_imp$exonEnds<- str_replace_all( hg19_imp$exonEnds, "\\,$", "")
+hg19_imp$exonFrames<- str_replace_all( hg19_imp$exonFrames, "\\,$", "")
+hg19_trim<- hg19_imp  %>% separate(chrom, into=c("chr"), sep = "_", extra = "drop")%>% filter(cdsStartStat != "none") 
+hg19_trim_chrom<- hg19_trim%>% filter(chr != "chrMT") %>% filter(chr != "chrUn")
+
+
+exon_input <- hg19_trim_chrom
+```
+
+
+```{r}
+##############this works############### #don't delete#########
+
+exonlist = list()
+for(i in exon_input$index){
+   unit<-exon_input[i,] 
+   exons.df <- data.frame(exon_start = matrix(unlist(str_split(unit[,c("exonStarts")], ","[[1]])), ncol = length(str_split(unit[, c("exonStarts")], ","[[1]]))), stringsAsFactors = F) %>% data.frame(exon_end = matrix(unlist(str_split(unit[,c("exonEnds")], ","[[1]])), ncol = length(str_split(unit[, c("exonEnds")], ","[[1]]))), stringsAsFactors = F) %>% data.frame(exon_frames = matrix(unlist(str_split(unit[,c("exonFrames")], ","[[1]])), ncol = length(str_split(unit[, c("exonFrames")], ","[[1]]))), stringsAsFactors = F)
+   exons.df$name <- unit$name
+   exons.df$symbol <-unit$name2
+   exons.df$chr<-unit$chr
+  exons.df$strand<-unit$strand
+  exons.df$cds_start<-unit$cdsStart
+  exons.df$cds_end<-unit$cdsEnd
+  exons.df$exon_count<-unit$exonCount
+
+   exonlist[[i]]<- exons.df
+   
+}
+exons_init <- do.call(rbind, exonlist)
+
+
+```
+
+
+
+```{r}
+
+setDT(exons_init)
+#fix minus strand things
+exons_strand <- exons_init %>% mutate(cds_exon_start = ifelse(strand == "-", paste0(exon_end), paste0(exon_start)))%>% mutate(cds_exon_end = ifelse(strand == "-", paste0(exon_start), paste0(exon_end))) %>% mutate(coding_start = ifelse(strand == "-", paste0(cds_end), paste0(cds_start))) %>% mutate(coding_end = ifelse(strand == "-", paste0(cds_start), paste0(cds_end))) 
+
+######################try without filtering on -1
+exons_strand_all<- exons_strand
+
+exons_strand_all$index<-rownames(exons_strand_all)
+exons_strand_all$index<- as.numeric(exons_strand_all$index)
+exons_nas <- exons_strand_all %>% filter(!is.na(name))
+minus_box <- exons_strand_all %>% filter(strand == "-")
+plus_box<- exons_strand_all %>% filter(strand == "+")
+
+############## calc exons seperately
+setDT(plus_box)
+plus_box[, exon := seq_len(.N), by = name]
+plus_box[, exon := rowid(name)]
+###############have to reverse minus strand stuff
+minus_box_arr<- minus_box %>% arrange(desc(index))
+setDT(minus_box_arr)
+minus_box_arr[, exon := seq_len(.N), by = name]
+minus_box_arr[, exon := rowid(name)]
+#for_igv_minus_box_arr <- minus_box_arr %>% unite(exon_box_a, c("chr", "cds_exon_start"), sep=":") %>% unite(exon_box, c("exon_box_a", "cds_exon_end"), sep = "-")
+
+
+both_sets<- rbind(plus_box, minus_box_arr)
+both_sets_tst <- both_sets %>% select(-exon)#############tons of NAs
+##difs
+ummm<- setdiff(exons_strand_all, both_sets_tst)
+
+
+##############get rid of old column3###############
+
+both_sets_all_products <- both_sets %>% select(-exon_start, -exon_end, -cds_start, -cds_end)
+
+for_igv_all <- both_sets_all_products %>% unite(exon_box_a, c("chr", "cds_exon_start"), sep=":", remove = F) %>% unite(exon_coords, c("exon_box_a", "cds_exon_end"), sep = "-", remove = F) %>% select(-exon_box_a)
+
+
+```
+
+
