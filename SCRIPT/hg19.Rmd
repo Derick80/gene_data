@@ -1,0 +1,321 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r}
+library(tidyverse)
+library(data.table)
+options(scipen = 999)
+```
+
+
+```{r}
+hg19_imp <- fread("DATA/hg19.txt")
+str(hg19_imp)
+# discovered that the exonStarts and ExonEnds rows contained an additional comma at the very end that needed to be removed
+# table(hg19_imp$exonStarts[1])
+# filter out cdsStartStat that is equal to none
+
+hg19_imp$index <- rownames(hg19_imp)
+hg19_imp$index <- as.numeric(hg19_imp$index)
+hg19_imp$exonStarts <- str_replace_all(hg19_imp$exonStarts, "\\,$", "")
+hg19_imp$exonEnds <- str_replace_all(hg19_imp$exonEnds, "\\,$", "")
+hg19_imp$exonFrames <- str_replace_all(hg19_imp$exonFrames, "\\,$", "")
+hg19_trim <- hg19_imp %>%
+  separate(chrom, into = c("chr"), sep = "_", extra = "drop") %>%
+  filter(cdsStartStat != "none")
+hg19_trim_chrom <- hg19_trim %>%
+  filter(chr != "chrMT") %>%
+  filter(chr != "chrUn")
+
+
+exon_input <- hg19_trim_chrom
+str(exon_input)
+```
+
+map2_dfc(l1, l2,
+~ as.data.frame(c(.x, .y)))
+
+```{r}
+#### testing calculating tx ranges
+
+gen_tx_sample <- exon_input %>%
+  select(name2, txStart, txEnd) %>%
+  filter(name2 == "BRCA2" | name2 == "BRCA1") %>%
+  distinct()
+gen_tx_df <- tibble(gen_tx_sample)
+str(gen_tx_df)
+
+gen_tx_smp_tst <- mutate(gen_tx_df, d = map2(txStart, txEnd, `:`))
+
+as.data.frame(gen_tx_smp_tst)
+########## this works in console
+gen_tx_df %>% mutate(new = map2(txStart, txEnd, `:`))
+##########################################################
+gen_tx_smp_tst <- gen_tx_df %>% map2_dfr(gen_tx_df$txStart, gen_tx_df$txEnd, `:`, ~ as.data.frame(c(.x, .y)))
+
+
+Custom <- c()
+for (i in seq_along(along.with = txStart))
+{
+  Custom <- c(Custom, txStart[i]:txEnd[i])
+}
+
+lengths <- (txEnd - txStart + 1)
+df <- cbind(
+  txStart = rep.int(
+    x = txStart,
+    times = lengths
+  ),
+  txEnd = rep.int(
+    x = txEnd,
+    times = lengths
+  ),
+  Custom
+)
+
+
+
+setDT(gen_tx_sample)
+gen_tx_range_tst <- gen_tx_sample[, v3 := Map(`:`, txStart, txEnd)]
+
+gen_tx_sam_vec <- data.frame(seq.int(gen_tx_sample$txStart, gen_tx_sample$txEnd, by = 1))
+
+
+gen_tx_sample$index <- rownames(gen_tx_sample)
+
+gen_tx_sample$index <- as.numeric(gen_tx_sample$index)
+gen_tx_ranges <- list()
+
+for (i in gen_tx_sample$index) {
+  row_unit <- gen_tx_sample[i, ]
+  tx.df <- data.frame(seq.int(gen_tx_sample$txStart, gen_tx_sample$txEnd, by = 1))
+  gen_tx_ranges[[i]] <- tx.df
+}
+```
+
+
+```{r}
+############## this works############### #don't delete#########
+
+exonlist <- list()
+for (i in exon_input$index) {
+  unit <- exon_input[i, ]
+  exons.df <- data.frame(exon_start = matrix(unlist(str_split(unit[, c("exonStarts")], ","[[1]])), ncol = length(str_split(unit[, c("exonStarts")], ","[[1]]))), stringsAsFactors = F) %>%
+    data.frame(exon_end = matrix(unlist(str_split(unit[, c("exonEnds")], ","[[1]])), ncol = length(str_split(unit[, c("exonEnds")], ","[[1]]))), stringsAsFactors = F) %>%
+    data.frame(exon_frames = matrix(unlist(str_split(unit[, c("exonFrames")], ","[[1]])), ncol = length(str_split(unit[, c("exonFrames")], ","[[1]]))), stringsAsFactors = F)
+  exons.df$name <- unit$name
+  exons.df$symbol <- unit$name2
+  exons.df$chr <- unit$chr
+  exons.df$strand <- unit$strand
+  exons.df$cds_start <- unit$cdsStart
+  exons.df$cds_end <- unit$cdsEnd
+  exons.df$exon_count <- unit$exonCount
+
+  exonlist[[i]] <- exons.df
+}
+exons_init <- do.call(rbind, exonlist)
+```
+
+
+
+```{r}
+
+setDT(exons_init)
+# fix minus strand things
+exons_strand <- exons_init %>%
+  mutate(cds_exon_start = ifelse(strand == "-", paste0(exon_end), paste0(exon_start))) %>%
+  mutate(cds_exon_end = ifelse(strand == "-", paste0(exon_start), paste0(exon_end))) %>%
+  mutate(coding_start = ifelse(strand == "-", paste0(cds_end), paste0(cds_start))) %>%
+  mutate(coding_end = ifelse(strand == "-", paste0(cds_start), paste0(cds_end)))
+
+###################### try without filtering on -1
+exons_strand_all <- exons_strand
+
+exons_strand_all$index <- rownames(exons_strand_all)
+exons_strand_all$index <- as.numeric(exons_strand_all$index)
+exons_nas <- exons_strand_all %>% filter(!is.na(name))
+minus_box <- exons_strand_all %>% filter(strand == "-")
+plus_box <- exons_strand_all %>% filter(strand == "+")
+
+############## calc exons seperately
+setDT(plus_box)
+plus_box[, exon := seq_len(.N), by = name]
+plus_box[, exon := rowid(name)]
+############### have to reverse minus strand stuff
+minus_box_arr <- minus_box %>% arrange(desc(index))
+setDT(minus_box_arr)
+minus_box_arr[, exon := seq_len(.N), by = name]
+minus_box_arr[, exon := rowid(name)]
+# for_igv_minus_box_arr <- minus_box_arr %>% unite(exon_box_a, c("chr", "cds_exon_start"), sep=":") %>% unite(exon_box, c("exon_box_a", "cds_exon_end"), sep = "-")
+
+
+both_sets <- rbind(plus_box, minus_box_arr)
+both_sets_tst <- both_sets %>% select(-exon) ############# tons of NAs
+## difs
+ummm <- setdiff(exons_strand_all, both_sets_tst)
+
+
+############## get rid of old column3###############
+
+both_sets_all_products <- both_sets %>% select(-exon_start, -exon_end, -cds_start, -cds_end)
+
+for_igv_all <- both_sets_all_products %>%
+  unite(exon_box_a, c("chr", "cds_exon_start"), sep = ":", remove = F) %>%
+  unite(exon_coords, c("exon_box_a", "cds_exon_end"), sep = "-", remove = F) %>%
+  select(-exon_box_a)
+```
+
+
+```{r}
+brca_tst <- for_igv_all %>% filter(symbol == "BRCA2" | name == "NM_001276760.3")
+brca_tst_cut <- brca_tst %>% select(-e)
+br_shap <- melt(brca_tst, id.vars = c("name", "symbol", "chr", "coding_start", "coding_end"), measure.vars = c("cds_exon_start", "cds_exon_end"))
+
+br_drop <- brca_tst %>%
+  select(-index, -exon_coords, -exon_frames, -strand, -exon_count, -chr) %>%
+  select(name, symbol, coding_start, coding_end, exon, cds_exon_start, cds_exon_end)
+br_shap <- dcast(brca_tst, 1:4, value.var = c("exon", "cds_exon_start", "cds_exon_end"))
+
+br.1 <- melt(brca_tst, id.vars = c("name", "symbol", "chr", "exon", "coding_start", "coding_end", "exon_frames", "exon_coords", "strand", "exon_count"), value.name = "exon_region")
+
+br.1$exon_region <- as.numeric(br.1$exon_region)
+br.1$coding_start <- as.numeric(br.1$coding_start)
+br.1$coding_end <- as.numeric(br.1$coding_end)
+br.2 <- br.1 %>% filter(symbol == "BRCA2")
+str(br.2)
+genes <- br.2
+genePlot <- function(genes) {
+  genes <- mutate(genes, gene_end_plot = genes$coding_end + 50) %>% mutate(genes, gene_start_plot = genes$coding_start + 50)
+
+  p1 <- ggplot() +
+    ylim(0.45, 0.55) +
+    xlim(0, gene_end_plot) +
+    geom_segment(
+      mapping = aes(
+        x = 0, y = 0.5, xend = gene_end_plot,
+        yend = 0.5
+      ),
+      color = "black"
+    ) +
+    geom_rect(
+      data = genes,
+      mapping = aes(
+        xmin = gene_start_plot,
+        xmax = gene_end_plot,
+        ymin = 0.45,
+        ymax = 0.55
+      ),
+      fill = "green",
+      color = "black"
+    ) +
+    geom_label(
+      data = genes,
+      aes(
+        x = gene_start_plot,
+        y = 0.5,
+        label = exon
+      )
+    )
+  return(p1)
+}
+
+genePlot(br.2)
+
+
+br_drop_b <- br_drop %>% filter(symbol == "BRCA2")
+br_drop_b$exon_region <- as.numeric(br_drop_b$exon_region)
+br_drop_b$coding_start <- as.numeric(br_drop_b$coding_start)
+br_drop_b$coding_end <- as.numeric(br_drop_b$coding_end)
+br_drop_b$cds_exon_start <- as.numeric(br_drop_b$cds_exon_start)
+br_drop_b$cds_exon_end <- as.numeric(br_drop_b$cds_exon_end)
+str(br_drop_b)
+
+br_drop_b$total_plot_end <- max(br_drop_b$coding_end) + max(br_drop_b$exon) * 50 + 50
+br_drop_b$total_plot_start <- min(br_drop_b$coding_start) + min(br_drop_b$exon) * 50 - 50
+br_drop_b <- mutate(br_drop_b, exon_start = br_drop_b$cds_exon_start + exon * 50) %>% mutate(exon_end = br_drop_b$cds_exon_end + exon * 50)
+
+plot_brca <- function(df) {
+  total_plot_end <- max(df$coding_end) + max(df$exon) * 50 + 50
+  total_plot_start <- min(df$coding_start) + min(df$exon) * 50 - 50
+
+  df <- mutate(df, exon_start = df$cds_exon_start + exon * 50) %>% mutate(exon_end = df$cds_exon_end + exon * 50)
+
+  p1 <- ggplot() +
+    ylim(0.45, 0.55) +
+    xlim(0, total_plot_end) +
+    geom_segment(
+      mapping = aes(
+        x = 0,
+        xend = total_plot_end,
+        y = 0.5,
+        yend = 0.5
+      ),
+      color = "black"
+    ) +
+    geom_rect(
+      data = df,
+      mapping = aes(
+        xmin = exon_start,
+        ymin = 0.45,
+        xmax = exon_end,
+        ymax = 0.55
+      ),
+      fill = "red",
+      color = "black"
+    )
+
+  return(p1)
+}
+
+plot_brca(br_drop_b)
+pa <- ggplot(br_drop_b, aes(xmin = total_plot_start, xmax = total_plot_end, y = name, fill = symbol))
+
+pc <- pa + geom_rect(data = br_drop_b, aes(xmin = exon_start, xmax = exon_end, ymin = 0.45, ymax = 0.55, fill = symbol))
+pc
+p2
+write.csv(br_drop_b, "BRCA_b.csv")
+```
+
+```{r}
+br_drop <- brca_tst %>%
+  select(-index, -exon_coords, -exon_frames, -strand, -exon_count, -chr) %>%
+  select(name, symbol, coding_start, coding_end, exon, cds_exon_start, cds_exon_end)
+br.a <- melt(br_drop, id.vars = c("symbol"), value.name = "exon_region")
+
+br.a$exon_region <- as.numeric(br.a$exon_region)
+br.a$coding_start <- as.numeric(br.a$coding_start)
+br.a$coding_end <- as.numeric(br.a$coding_end)
+br.b <- br.a %>% filter(symbol == "BRCA2")
+str(br.b)
+
+br.c <- brca_tst %>% mutate(exon_region_calc = paste(cds_exon_start, cds_exon_end, sep = "-"))
+str(br.c)
+br.d <- melt(br.c, id.vars = c("name", "symbol", "chr", "exon", "coding_start", "coding_end", "exon_frames", "exon_coords", "strand", "exon_count"), measure.vars = c("exon_region_calc"))
+```
+
+
+```{r}
+library(tidyverse)
+library(data.table)
+library(readxl)
+options(scipen=999)
+brca_imp<-read_xlsx("brca.xlsx")
+str(brca_imp)
+brca<- brca_imp %>% mutate(starter = start-1000) %>% mutate(ender = end+1000) %>% select(-start, -end) %>% rename(end=ender, start = starter)
+
+p2<- ggplot()+ geom_segment(data = brca_imp,aes(x=start,  xend=end, y=symbol, yend=symbol),size=10,color='#a7a9ac' )
+
+p2
+
+p3<- p2 + geom_rect(data = brca_imp, mapping = aes(xmin=exon_start, xmax=exon_stop, ymin=0.45, ymax=0.55),
+color = "black",
+fill = "#56B4E9")+
+  facet_wrap(~ symbol, scales = "free", ncol = 1)
+p3
+```
+
