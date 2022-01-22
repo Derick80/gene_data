@@ -1,0 +1,84 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+library(tidyverse)
+library(data.table)
+library(seqinr)
+library(bioseq)
+options(scipen = 999)
+library(biomartr)
+```
+
+```{r}
+hg19_seq_data_imp<- read_fasta("DATA/seq_data.fas", type = "DNA")
+str(hg19_seq_data_imp)
+
+```
+
+```{r}
+file_path <-getGenome(db= "refseq", organism = "Homo sapiens", path = file.path("_ncbi_downloads", "genomes"))
+
+```
+
+```{r}
+tst_f<- read_fasta("DATA/chr13.fa", type = "DNA")
+str(tst_f)
+```
+
+```{r}
+tst_genes<- read_clip_tbl(x= read_clip(),strip.white= T, sep= "\n")
+str(tst_genes)
+```
+
+```{r}
+unique_ids <- exon_input %>% select(name) %>% distinct()
+#write_delim(unique_ids, "tst.txt", col_names = F, delim = " ")
+```
+
+```{r}
+coord_imp <- fread("DATA/testing_coords.txt")
+```
+
+```{r}
+brca2 <- read_file("DATA/brca2.txt")
+con <- file("DATA/brca2.txt", "r", blocking = F)
+singleString<- readLines(con)
+singleString<- paste(singleString, sep = " ", collapse = "")
+str(singleString)
+brca_vec <- unlist(strsplit(singleString,"\\b"))
+
+str(brca2)
+as.vector(brca2)
+mm<- (32889444-200):(32974605+200)
+chr13:32889244-32974805
+mm_1 <- 32889244:32974805
+int_1 <- 32889644:32974405
+
+32889644-32890558
+32974405-32972907
+############# tx_start - tx_end
+32889644-32974405
+
+###############coding start coding end
+```
+
+\
+```{r}
+tst_b <- file("DATA/Brca2_tst_1_1", "r", blocking = F)
+mystring<- readLines(tst_b)
+mystring<- paste(mystring, sep = " ", collapse = "")
+b_vec<- unlist(strsplit(mystring, "\\b"))
+
+mytst<- read_file("DATA/BRCA2_1")
+myvec<- unlist(strsplit(mytst, "\\b"))
+```
+

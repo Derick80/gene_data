@@ -3,3 +3,17 @@
 .RData
 .Ruserdata
 *.txt
+*.gz
+*.fa
+*.fasta
+*.tsv
+*.seq
+*.fna
+*.gene_info
+*.gtf
+*.gff
+*.xlsx
+*.bam
+*.bai
+*.fas
+*.csv

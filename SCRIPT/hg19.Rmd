@@ -12,6 +12,13 @@ library(data.table)
 options(scipen = 999)
 ```
 
+```{r}
+acmg_list_imp <- readxl::read_xlsx("DATA/acmg_list.xlsx")
+acmg_to_vec<-setDT(acmg_list_imp)[, .(Gene)]
+acmg_vec <- as.vector(acmg_to_vec)
+
+```
+
 
 ```{r}
 hg19_imp <- fread("DATA/hg19.txt")
@@ -20,8 +27,8 @@ str(hg19_imp)
 # table(hg19_imp$exonStarts[1])
 # filter out cdsStartStat that is equal to none
 
-hg19_imp$index <- rownames(hg19_imp)
-hg19_imp$index <- as.numeric(hg19_imp$index)
+# hg19_imp$index <- rownames(hg19_imp)
+# hg19_imp$index <- as.numeric(hg19_imp$index)
 hg19_imp$exonStarts <- str_replace_all(hg19_imp$exonStarts, "\\,$", "")
 hg19_imp$exonEnds <- str_replace_all(hg19_imp$exonEnds, "\\,$", "")
 hg19_imp$exonFrames <- str_replace_all(hg19_imp$exonFrames, "\\,$", "")
@@ -32,13 +39,162 @@ hg19_trim_chrom <- hg19_trim %>%
   filter(chr != "chrMT") %>%
   filter(chr != "chrUn")
 
-
-exon_input <- hg19_trim_chrom
+hg19_trim_chrom_1<-hg19_trim_chrom
+hg19_trim_chrom_2<- hg19_trim_chrom_1 %>% group_by(name2) %>% top_n(1, exonCount) %>% filter(name2 %in% acmg_to_vec$Gene) %>% ungroup()
+hg19_trim_chrom_2$index <- rownames(hg19_trim_chrom_2)
+hg19_trim_chrom_2$index <- as.numeric(hg19_trim_chrom_2$index)
+# setDT(hg19_trim_chrom_2)
+exon_input<- setDT(hg19_trim_chrom_2)
+###########original exon input ########
+#exon_input <- hg19_trim_chrom
 str(exon_input)
 ```
 
 map2_dfc(l1, l2,
 ~ as.data.frame(c(.x, .y)))
+
+
+```{r}
+############## this works############### #don't delete#########
+
+exonlist <- list()
+for (i in exon_input$index) {
+  unit <- exon_input[i, ]
+  exons.df <- data.frame(exon_start = matrix(unlist(str_split(unit[, c("exonStarts")], ","[[1]])), ncol = length(str_split(unit[, c("exonStarts")], ","[[1]]))), stringsAsFactors = F) %>%
+    data.frame(exon_end = matrix(unlist(str_split(unit[, c("exonEnds")], ","[[1]])), ncol = length(str_split(unit[, c("exonEnds")], ","[[1]]))), stringsAsFactors = F) %>%
+    data.frame(exon_frames = matrix(unlist(str_split(unit[, c("exonFrames")], ","[[1]])), ncol = length(str_split(unit[, c("exonFrames")], ","[[1]]))), stringsAsFactors = F)
+  exons.df$name <- unit$name
+  exons.df$symbol <- unit$name2
+  exons.df$chr <- unit$chr
+  exons.df$strand <- unit$strand
+  exons.df$tx_start<-unit$txStart
+  exons.df$tx_end<-unit$txEnd
+  exons.df$cds_start <- unit$cdsStart
+  exons.df$cds_end <- unit$cdsEnd
+  exons.df$exon_count <- unit$exonCount
+
+  exonlist[[i]] <- exons.df
+}
+exons_init <- do.call(rbind, exonlist)
+```
+
+
+
+```{r}
+
+setDT(exons_init)
+# fix minus strand things
+exons_strand <- exons_init %>%
+  mutate(cds_exon_start = ifelse(strand == "-", paste0(exon_end), paste0(exon_start))) %>%
+  mutate(cds_exon_end = ifelse(strand == "-", paste0(exon_start), paste0(exon_end))) %>%
+  mutate(coding_start = ifelse(strand == "-", paste0(cds_end), paste0(cds_start))) %>%
+  mutate(coding_end = ifelse(strand == "-", paste0(cds_start), paste0(cds_end)))%>%
+  mutate(start_tx = ifelse(strand == "-", paste0(tx_end), paste0(tx_start)))%>%
+  mutate(end_tx = ifelse(strand == "-", paste0(tx_start), paste0(tx_end)))
+
+###################### try without filtering on -1
+exons_strand_all <- exons_strand
+
+exons_strand_all$index <- rownames(exons_strand_all)
+exons_strand_all$index <- as.numeric(exons_strand_all$index)
+exons_nas <- exons_strand_all %>% filter(!is.na(name))
+minus_box <- exons_strand_all %>% filter(strand == "-")
+plus_box <- exons_strand_all %>% filter(strand == "+")
+
+############## calc exons seperately
+setDT(plus_box)
+plus_box[, exon := seq_len(.N), by = name]
+plus_box[, exon := rowid(name)]
+plus_box$cds_exon_start <- as.numeric(plus_box$cds_exon_start)
+plus_box$cds_exon_end <- as.numeric(plus_box$cds_exon_end)
+plus_box_1 <- plus_box %>% mutate(intron_start = paste(cds_exon_end+1)) %>% mutate(intron_end = paste(cds_exon_start-1))
+plus_box_2<- plus_box_1 %>% mutate(intron = paste(exon -1))
+############### have to reverse minus strand stuff
+minus_box_arr <- minus_box %>% arrange(desc(index))
+setDT(minus_box_arr)
+minus_box_arr[, exon := seq_len(.N), by = name]
+minus_box_arr[, exon := rowid(name)]
+minus_box_arr$cds_exon_start <- as.numeric(minus_box_arr$cds_exon_start)
+minus_box_arr$cds_exon_end <- as.numeric(minus_box_arr$cds_exon_end)
+minus_box_arr_1 <- minus_box_arr %>% mutate(intron_start = paste(cds_exon_start+1)) %>% mutate(intron_end = paste(cds_exon_end-1))
+minus_box_arr_2<- minus_box_arr_1 %>% mutate(intron = paste(exon -1))
+# for_igv_minus_box_arr <- minus_box_arr %>% unite(exon_box_a, c("chr", "cds_exon_start"), sep=":") %>% unite(exon_box, c("exon_box_a", "cds_exon_end"), sep = "-")
+
+
+both_sets <- rbind(plus_box_2, minus_box_arr_2)
+#both_sets_tst <- both_sets %>% select(-exon) ############# tons of NAs
+## difs
+#ummm <- setdiff(exons_strand_all, both_sets)
+
+str(both_sets)
+############## get rid of old column3###############
+setDT(both_sets)[, start_tx := as.numeric(start_tx)][, end_tx := as.numeric(end_tx)][, coding_start := as.numeric(coding_start)][, coding_end := as.numeric(coding_end)]
+both_sets_all_products <- both_sets %>% select(-exon_start, -exon_end, -cds_start, -cds_end) %>% mutate(tx_length = abs(start_tx - end_tx)) %>% mutate(coding_length = abs(coding_start - coding_end)) %>% mutate(cds_length = abs(cds_exon_start-cds_exon_end)) %>% mutate(genomic_coords = paste(chr ,start_tx, sep = ":")) %>% mutate(gen_coord = paste(genomic_coords, end_tx, sep = ))
+
+for_igv_all <- both_sets_all_products %>%
+  unite(exon_box_a, c("chr", "cds_exon_start"), sep = ":", remove = F) %>%
+  unite(exon_coords, c("exon_box_a", "cds_exon_end"), sep = "-", remove = F) %>%
+  select(-exon_box_a)
+```
+
+
+```{r}
+longest_exons<- for_igv_all  %>% filter(max(exon_count))
+library(seqinr)
+myfile <-system.file("DATA/sequence.fasta", package = "seqinr")
+lmna_fas_1 <- read.fasta(file= myfile)
+lmna_fas<-read.fasta(file = system.file("DATA/sequence.fasta", package = "seqinr"), seqtype = "DNA", as.string = F, set.attributes = T, strip.desc = T, whole.header = F)
+
+lmna<-read_file("DATA/lmna")
+lmna_c<-  unlist(strsplit(lmna, "\\b"))
+```
+
+
+
+```{r}
+#################reproduce gene plots ###############
+
+b1_b2<- for_igv_all %>% filter(symbol %in% c("BRCA1","BRCA2"))%>% filter(name == c("NM_007294.4", "NM_000059.4"))
+b1_b2_strand <- b1_b2 %>% mutate(strands = ifelse(strand == "+", 1, 0)) %>% select(-strand) %>% rename(strand=strands)
+#fwrite(b1_b2_strand, file = "OUTPUT/b1_b2_out.csv")
+
+# b1_b2_1 <- b1_b2 %>% mutate(plot_start = cds_exon_start +)
+p1<- ggplot(data = b1_b2, y=symbol)+
+    geom_segment( aes(x=tx_start, xend= tx_end, y=0.5, yend=0.5),size=10,color='#a7a9ac')
+
+
+p2 <- p1 + geom_rect(data = b1_b2, mapping = aes(xmin=cds_exon_start, xmax=cds_exon_end, ymin=0.45, ymax=0.55),
+color = "black",
+fill = "#56B4E9")+
+  facet_wrap(~ symbol, scales = "free", ncol = 1)
+p2
+
+
+
+z1<- ggplot(b1_b2, y=symbol)
+
+z2 <- z1 + geom_bar()
+z2
+```
+
+
+
+```{r}
+#########TESTING INTRONS FOR MINUS STRAND###################
+###startr with just brca#######
+
+intron_init <- minus_box_arr
+str(intron_init)
+intron_brca<- intron_init %>% filter(symbol == "BRCA1") %>% filter(name == "NM_007294.4", "NM_000059.4")
+intron_brca$cds_exon_start <- as.numeric(intron_brca$cds_exon_start)
+intron_brca$cds_exon_end <- as.numeric(intron_brca$cds_exon_end)
+str(intron_brca)
+########cds_exon_start 
+intron_bound_1 <- intron_brca %>% mutate(intron_start = paste(cds_exon_start+1)) %>% mutate(intron_end = paste(cds_exon_end-1))
+intron_numbers<- intron_bound_1 %>% mutate(intron = paste(exon -1))
+```
+
+
 
 ```{r}
 #### testing calculating tx ranges
@@ -96,78 +252,6 @@ for (i in gen_tx_sample$index) {
   tx.df <- data.frame(seq.int(gen_tx_sample$txStart, gen_tx_sample$txEnd, by = 1))
   gen_tx_ranges[[i]] <- tx.df
 }
-```
-
-
-```{r}
-############## this works############### #don't delete#########
-
-exonlist <- list()
-for (i in exon_input$index) {
-  unit <- exon_input[i, ]
-  exons.df <- data.frame(exon_start = matrix(unlist(str_split(unit[, c("exonStarts")], ","[[1]])), ncol = length(str_split(unit[, c("exonStarts")], ","[[1]]))), stringsAsFactors = F) %>%
-    data.frame(exon_end = matrix(unlist(str_split(unit[, c("exonEnds")], ","[[1]])), ncol = length(str_split(unit[, c("exonEnds")], ","[[1]]))), stringsAsFactors = F) %>%
-    data.frame(exon_frames = matrix(unlist(str_split(unit[, c("exonFrames")], ","[[1]])), ncol = length(str_split(unit[, c("exonFrames")], ","[[1]]))), stringsAsFactors = F)
-  exons.df$name <- unit$name
-  exons.df$symbol <- unit$name2
-  exons.df$chr <- unit$chr
-  exons.df$strand <- unit$strand
-  exons.df$cds_start <- unit$cdsStart
-  exons.df$cds_end <- unit$cdsEnd
-  exons.df$exon_count <- unit$exonCount
-
-  exonlist[[i]] <- exons.df
-}
-exons_init <- do.call(rbind, exonlist)
-```
-
-
-
-```{r}
-
-setDT(exons_init)
-# fix minus strand things
-exons_strand <- exons_init %>%
-  mutate(cds_exon_start = ifelse(strand == "-", paste0(exon_end), paste0(exon_start))) %>%
-  mutate(cds_exon_end = ifelse(strand == "-", paste0(exon_start), paste0(exon_end))) %>%
-  mutate(coding_start = ifelse(strand == "-", paste0(cds_end), paste0(cds_start))) %>%
-  mutate(coding_end = ifelse(strand == "-", paste0(cds_start), paste0(cds_end)))
-
-###################### try without filtering on -1
-exons_strand_all <- exons_strand
-
-exons_strand_all$index <- rownames(exons_strand_all)
-exons_strand_all$index <- as.numeric(exons_strand_all$index)
-exons_nas <- exons_strand_all %>% filter(!is.na(name))
-minus_box <- exons_strand_all %>% filter(strand == "-")
-plus_box <- exons_strand_all %>% filter(strand == "+")
-
-############## calc exons seperately
-setDT(plus_box)
-plus_box[, exon := seq_len(.N), by = name]
-plus_box[, exon := rowid(name)]
-############### have to reverse minus strand stuff
-minus_box_arr <- minus_box %>% arrange(desc(index))
-setDT(minus_box_arr)
-minus_box_arr[, exon := seq_len(.N), by = name]
-minus_box_arr[, exon := rowid(name)]
-# for_igv_minus_box_arr <- minus_box_arr %>% unite(exon_box_a, c("chr", "cds_exon_start"), sep=":") %>% unite(exon_box, c("exon_box_a", "cds_exon_end"), sep = "-")
-
-
-both_sets <- rbind(plus_box, minus_box_arr)
-both_sets_tst <- both_sets %>% select(-exon) ############# tons of NAs
-## difs
-ummm <- setdiff(exons_strand_all, both_sets_tst)
-
-
-############## get rid of old column3###############
-
-both_sets_all_products <- both_sets %>% select(-exon_start, -exon_end, -cds_start, -cds_end)
-
-for_igv_all <- both_sets_all_products %>%
-  unite(exon_box_a, c("chr", "cds_exon_start"), sep = ":", remove = F) %>%
-  unite(exon_coords, c("exon_box_a", "cds_exon_end"), sep = "-", remove = F) %>%
-  select(-exon_box_a)
 ```
 
 
@@ -298,24 +382,4 @@ str(br.c)
 br.d <- melt(br.c, id.vars = c("name", "symbol", "chr", "exon", "coding_start", "coding_end", "exon_frames", "exon_coords", "strand", "exon_count"), measure.vars = c("exon_region_calc"))
 ```
 
-
-```{r}
-library(tidyverse)
-library(data.table)
-library(readxl)
-options(scipen=999)
-brca_imp<-read_xlsx("brca.xlsx")
-str(brca_imp)
-brca<- brca_imp %>% mutate(starter = start-1000) %>% mutate(ender = end+1000) %>% select(-start, -end) %>% rename(end=ender, start = starter)
-
-p2<- ggplot()+ geom_segment(data = brca_imp,aes(x=start,  xend=end, y=symbol, yend=symbol),size=10,color='#a7a9ac' )
-
-p2
-
-p3<- p2 + geom_rect(data = brca_imp, mapping = aes(xmin=exon_start, xmax=exon_stop, ymin=0.45, ymax=0.55),
-color = "black",
-fill = "#56B4E9")+
-  facet_wrap(~ symbol, scales = "free", ncol = 1)
-p3
-```
 
