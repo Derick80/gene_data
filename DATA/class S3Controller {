@@ -1,0 +1,87 @@
+class S3Controller {
+  FOLDER = '/* s3-folder-name */'; // For example, 'my_folder'.
+  BUCKET = 'arn:aws:s3:::mys3bucketblog'; // For example, 'my_bucket'.
+
+
+
+
+
+  private static getS3Bucket(): any {
+    return new S3Client(
+      {
+        accessKeyId 
+        secretAccessKey
+       // For example, 'us-east-1'.
+      }
+    );
+  }
+
+  public uploadFile(file) {
+    const bucket = new S3Client(
+      {
+        accessKeyId: '/* access key here */',
+        secretAccessKey: '/* secret key here */',
+        region: 'us-east-2'
+      }
+    );
+
+    const params = {
+      Bucket: this.BUCKET,
+      Key: this.FOLDER + file.name,
+      Body: file,
+      ACL: 'public-read'
+    };
+
+    bucket.upload(params, function (err, data) {
+      if (err) {
+        console.log('There was an error uploading your file: ', err);
+        return false;
+      }
+      console.log('Successfully uploaded file.', data);
+      return true;
+    });
+  }
+
+  public getFiles(): Observable<Array<FileUpload>> {
+    const fileUploads = [];
+
+    const params = {
+      Bucket: this.BUCKET,
+      Prefix: this.FOLDER
+    };
+
+    S3Controller.getS3Bucket().listObjects(params, function (err, data) {
+      if (err) {
+        console.log('There was an error getting your files: ' + err);
+        return;
+      }
+      console.log('Successfully get files.', data);
+
+      const fileDetails = data.Contents;
+
+      fileDetails.forEach((file) => {
+        fileUploads.push(new FileUpload(
+          file.Key,
+          'https://s3.amazonaws.com/' + params.Bucket + '/' + file.Key
+        ));
+      });
+    });
+
+    return of(fileUploads);
+  }
+
+  public deleteFile(file: FileUpload) {
+    const params = {
+      Bucket: this.BUCKET,
+      Key: file.name
+    };
+
+    S3Controller.getS3Bucket().deleteObject(params,  (err, data) => {
+      if (err) {
+        console.log('There was an error deleting your file: ', err.message);
+        return;
+      }
+      console.log('Successfully deleted file.');
+    });
+  }
+}
